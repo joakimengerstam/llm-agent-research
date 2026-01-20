@@ -1,0 +1,8 @@
+
+httpx
+openai
+bs4
+rich
+pydantic_settings
+
+openai>=1.0.0
