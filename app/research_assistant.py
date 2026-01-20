@@ -4,15 +4,11 @@ Usage: python research_assistant.py "your research query"
 """
 import asyncio
 import json
-import sqlite3
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from pathlib import Path
-from typing import List, Optional
+from typing import List
 import sys
 
-import httpx
-from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -20,25 +16,14 @@ from rich.markdown import Markdown
 
 import app.llm.openai_client as openai_api
 from app.config.settings import *
+from app.tools.web_scrape_tool import WebScrapeTool
+from app.tools.web_search_tool import WebSearchTool
 
 
 console = Console()
 
-# Configuration
-DATA_DIR = Path.home() / ".research_assistant"
-DB_PATH = DATA_DIR / "cache.db"
-
 # Initialize
-DATA_DIR.mkdir(exist_ok=True)
 client = openai_api.async_client()
-
-
-@dataclass
-class SearchResult:
-    title: str
-    url: str
-    snippet: str
-    content: Optional[str] = None
 
 
 @dataclass
@@ -46,130 +31,6 @@ class ResearchStep:
     action: str  # 'search', 'scrape', 'analyze'
     query: str
     reasoning: str
-
-
-class Cache:
-    """Simple SQLite cache for web content"""
-    
-    def __init__(self):
-        self.conn = sqlite3.connect(DB_PATH)
-        self.conn.execute("""
-            CREATE TABLE IF NOT EXISTS cache (
-                url TEXT PRIMARY KEY,
-                content TEXT,
-                timestamp REAL
-            )
-        """)
-        self.conn.commit()
-    
-    def get(self, url: str) -> Optional[str]:
-        cursor = self.conn.execute("SELECT content FROM cache WHERE url = ?", (url,))
-        row = cursor.fetchone()
-        return row[0] if row else None
-    
-    def set(self, url: str, content: str):
-        self.conn.execute(
-            "INSERT OR REPLACE INTO cache (url, content, timestamp) VALUES (?, ?, ?)",
-            (url, content, datetime.now().timestamp())
-        )
-        self.conn.commit()
-
-
-class WebSearchTool:
-    """Web search using Brave Search API or fallback to DuckDuckGo"""
-    
-    async def search(self, query: str, num_results: int = 5) -> List[SearchResult]:
-        if settings.brave_api_key:
-            return await self._brave_search(query, num_results)
-        else:
-            console.print("[yellow]💡 Tip: Set BRAVE_API_KEY for better search results[/yellow]")
-            return await self._duckduckgo_search(query, num_results)
-    
-    async def _brave_search(self, query: str, num_results: int) -> List[SearchResult]:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                headers={"X-Subscription-Token": settings.brave_api_key},
-                params={"q": query, "count": num_results}
-            )
-            data = response.json()
-            
-            results = []
-            for item in data.get("web", {}).get("results", [])[:num_results]:
-                results.append(SearchResult(
-                    title=item.get("title", ""),
-                    url=item.get("url", ""),
-                    snippet=item.get("description", "")
-                ))
-            return results
-    
-    async def _duckduckgo_search(self, query: str, num_results: int) -> List[SearchResult]:
-        """Fallback search using DuckDuckGo HTML scraping"""
-        async with httpx.AsyncClient(follow_redirects=True) as client:
-            response = await client.get(
-                "https://html.duckduckgo.com/html/",
-                params={"q": query},
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            results = []
-            
-            for result in soup.select('.result')[:num_results]:
-                title_elem = result.select_one('.result__a')
-                snippet_elem = result.select_one('.result__snippet')
-                
-                if title_elem:
-                    results.append(SearchResult(
-                        title=title_elem.get_text(strip=True),
-                        url=title_elem.get('href', ''),
-                        snippet=snippet_elem.get_text(strip=True) if snippet_elem else ""
-                    ))
-            
-            return results
-
-
-class WebScrapeTool:
-    """Extract clean text content from URLs"""
-    
-    def __init__(self):
-        self.cache = Cache()
-    
-    async def scrape(self, url: str, max_length: int = 5000) -> str:
-        # Check cache first
-        cached = self.cache.get(url)
-        if cached:
-            console.print(f"[dim]📦 Using cached content for {url}[/dim]")
-            return cached[:max_length]
-        
-        try:
-            async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-                response = await client.get(
-                    url,
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Remove script and style elements
-                for script in soup(["script", "style", "nav", "footer", "header"]):
-                    script.decompose()
-                
-                # Get text
-                text = soup.get_text()
-                
-                # Clean up whitespace
-                lines = (line.strip() for line in text.splitlines())
-                chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-                text = ' '.join(chunk for chunk in chunks if chunk)
-                
-                # Cache the result
-                self.cache.set(url, text)
-                
-                return text[:max_length]
-        except Exception as e:
-            console.print(f"[red]❌ Error scraping {url}: {e}[/red]")
-            return ""
 
 
 class ResearchAgent:
@@ -337,7 +198,7 @@ async def main():
         
         # Save report
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        report_path = DATA_DIR / f"report_{timestamp}.md"
+        report_path = settings.DATA_DIR / f"report_{timestamp}.md"
         report_path.write_text(report)
         console.print(f"[green]✅ Report saved to: {report_path}[/green]")
         

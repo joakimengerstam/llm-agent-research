@@ -10,7 +10,7 @@ pip install -r requirements.txt
 python -m app.research_assistant
 
 # Example:
-> python -m app.research_assistant  "what is an AI agentic system?"
+> python -m app.research_assistant  "research AI agentic systems"
 
 
                                               ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
