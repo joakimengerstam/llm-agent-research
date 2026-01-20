@@ -306,9 +306,6 @@ Please create a comprehensive research report."""
             }
         ]
 
-        print("Executing prompt:  ")
-        print(prompt)
-
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=prompt,
